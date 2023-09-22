@@ -19,9 +19,14 @@ const routes = [
     component: () =>
       import(/* webpackChunkName: "about" */ "../views/About.vue"),
   },
+  {
+    path: "/table",
+    name: "Table",
+    component: () => import("../views/Table/Table.vue"),
+  },
 ];
-
 const router = new VueRouter({
+  mode: "history",
   routes,
 });
 
