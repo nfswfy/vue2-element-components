@@ -1,9 +1,6 @@
 import ElTable from 'element-ui/lib/table'
 import ElTableColumn from 'element-ui/lib/table-column'
 import ElPagination from 'element-ui/lib/pagination'
-// console.log(ElTable)
-console.log(ElTableColumn)
-// console.log(ElPagination)
 //比较两个对象中有没有相同属性
 function compareProps(props1, props2) {
   let result = []
@@ -36,7 +33,25 @@ const props = Object.assign({}, ElTable.props, ElPaginationProps, {
     type: Boolean,
     default: true
   },
+  showIndex: {
+    type: Boolean,
+    default: false
+  },
+  indexMethod: {
+    type: Function,
+    default: (index) => {
+      return index + 1
+    }
+  },
   showSelection: {
+    type: Boolean,
+    default: false
+  },
+  showExpand: {
+    type: Boolean,
+    default: false
+  },
+  isTree: {
     type: Boolean,
     default: false
   },
@@ -57,13 +72,14 @@ const props = Object.assign({}, ElTable.props, ElPaginationProps, {
     default: 'total'
   }
 })
-const pagination = { pageSize: 10, currentPage: 2, hideOnSinglePage: false }
+const pagination = { pageSize: 10, currentPage: 1, hideOnSinglePage: true }
 export default {
   name: 'Table',
   props: props,
   data() {
     return {
       tableLoading: false,
+      sorter: {}, //排序字段及类型 {sortField: 'id', sortOrder: 'desc'}
       localData: [],
       pagination: {}
     }
@@ -86,9 +102,6 @@ export default {
         }
       })
     })
-    // console.log(this.$el)
-    console.log('$slots', this.$slots)
-    console.log(this.$slots.default)
   },
   methods: {
     /**
@@ -96,7 +109,7 @@ export default {
      * 监听数据变化
      */
     initPagination() {
-      this.pagination = Object.assign({}, pagination, { total: 100 })
+      this.pagination = Object.assign({}, pagination, { total: 0 })
       //   this.$on('total', (total) => {
       //     this.pagination['total'] = total
       //     this.pagination['pageCount'] = total / this.pagination['pageSize']
@@ -131,7 +144,8 @@ export default {
       this.tableLoading = true
       const parameter = Object.assign(
         {},
-        { [this.pageSizeName]: this.pagination['pageSize'], [this.currentPageName]: this.pagination['currentPage'] }
+        { [this.pageSizeName]: this.pagination['pageSize'], [this.currentPageName]: this.pagination['currentPage'] },
+        this.sorter
       )
 
       const result = this.data(parameter)
@@ -171,33 +185,107 @@ export default {
         console.error('Invalid prop:result.then is not a function. Prop of data must be Promise.')
       }
     },
+    lazyLoad(tree, treeNode, resolve) {
+      console.log(tree, treeNode, resolve)
+      this.$emit('lazyLoad', tree, treeNode, resolve)
+    },
+    summaryFun({ columns, data }) {
+      const sums = []
+      //判断columns包含的特殊类型
+      const specialTypeLength = columns.filter((item) => {
+        return item.type === 'index' || item.type === 'selection' || item.type === 'expand'
+      }).length
+      columns.forEach((column, index) => {
+        if (specialTypeLength) {
+          sums[specialTypeLength - 1] = this.sumText || '合计'
+        }
+        const summarycol = this.columns.find((item) => {
+          if (item.prop !== column.property) {
+            return false
+          }
+          let flag = false
+          if ('summaryFun' in item) {
+            if (typeof item['summaryFun'] === 'function') {
+              const result = item.summaryFun({ columns, data })
+              if (result) {
+                flag = true
+                console.info(`属性 summaryFun 是一个函数，并且返回了值：${result}`)
+              } else {
+                console.error(`属性 summaryFun 是一个函数，但是返回的不是值`)
+              }
+            } else {
+              console.error(`属性 summaryFun 不是一个函数`)
+            }
+          }
+          return flag
+        })
+        if (summarycol && summarycol.summaryFun) {
+          const { summaryFun } = summarycol
+          try {
+            sums[index] = summaryFun({ column, data })
+          } catch (e) {
+            sums[index] = 'N/A'
+            console.error(e)
+          }
+        } else {
+          const values = data.map((item) => Number(item[column.property]))
+          if (!values.every((value) => isNaN(value))) {
+            sums[index] = values.reduce((prev, curr) => {
+              const value = Number(curr)
+              if (!isNaN(value)) {
+                return prev + curr
+              } else {
+                return prev
+              }
+            }, 0)
+          } else {
+            sums[index] = ''
+          }
+        }
+      })
+
+      return sums
+    },
     handleSizeChange(pageSize) {
-      console.log(pageSize)
       this.pagination['pageSize'] = pageSize
       this.loadTableData()
     },
     handlePrevClick(currentPage) {
-      console.log('prev', currentPage)
       this.$emit('prev-click', currentPage)
     },
     handleNextClick(currentPage) {
-      console.log('next', currentPage)
       this.$emit('next-click', currentPage)
     },
     handleCurrentChange(currentPage) {
-      console.log(currentPage)
       this.pagination['currentPage'] = currentPage
       this.loadTableData()
     },
     handleSelectionChange(selection) {
-      console.log(selection)
       this.$emit('selection-change', selection)
     },
+    handleCurrentRowChange(currentRow, oldCurrentRow) {
+      console.log(currentRow, oldCurrentRow)
+    },
+    handleSortChange({ column, prop, order }) {
+      console.log(column, prop, order)
+      this.sorter = Object.assign(
+        {},
+        (order && {
+          sortOrder: order
+        }) ||
+          {},
+        (order &&
+          prop && {
+            sortField: prop
+          }) ||
+          {}
+      )
+      this.loadTableData()
+    },
     renderTableColumns(h, columns) {
-      console.log(ElTableColumn.props)
-
+      console.log('ElTableColumn.props', ElTableColumn.props)
       // 数据列
-      return columns.map((column, index) => {
+      const defaultColumns = columns.map((column, index) => {
         //判断是不是多级表头
         if (typeof column.children !== 'undefined') {
           return <ElTableColumn {...{ props: column }}>{this.renderTableColumns(h, column.children)}</ElTableColumn>
@@ -210,16 +298,31 @@ export default {
             return tableColumnProps[k]
           }
           //特殊处理的k
-
           return tableColumnProps[k]
         })
+        const scopedSlots = {
+          default: (scope) => {
+            if (column.slotScope) {
+              return this.$scopedSlots[column.slotScope](scope)
+            }
+            return scope.row[column.prop]
+          },
+          header: (scope) => {
+            if (column.slotHeader && column.slotHeader.endsWith('Header')) {
+              return this.$scopedSlots[column.slotHeader](scope)
+            }
+            return column.label
+          }
+        }
         return (
-          <ElTableColumn key={index} {...{ props: tableColumnProps }}>
-            {column.slotHeader && <template slot="header">{this.$slots[column.slotHeader]} </template>}
-            {column.slotScope && <template slot="default">{this.$slots[column.slotScope]}</template>}
+          <ElTableColumn key={index} {...{ props: tableColumnProps }} scopedSlots={scopedSlots}>
+            {/* {column.slotHeader && column.slotHeader.endsWith('Header') && (
+              <template slot="header" slot-scope="scope">{this.$slots[column.slotHeader]} </template>
+            )} */}
           </ElTableColumn>
         )
       })
+      return [].concat(defaultColumns)
     }
   },
   render(h) {
@@ -234,12 +337,20 @@ export default {
         return tableProps[k]
       }
       //特殊处理的k
-
+      if (k === 'summaryMethod') {
+        //使用列中的合并项
+        tableProps[k] = this.summaryFun
+        return tableProps[k]
+      }
+      if (k === 'load') {
+        //树形懒加载的方法
+        tableProps[k] = this.lazyLoad
+        return tableProps[k]
+      }
       //如果table的props没有，就去this中找
       this[k] && (tableProps[k] = this[k])
       return tableProps[k]
     })
-    console.log('tableProps', tableProps)
     const paginationKeys = Object.keys(this.pagination)
     //pagination的props赋值
     Object.keys(ElPagination.props).forEach((k) => {
@@ -259,8 +370,17 @@ export default {
         {...{ props: tableProps }}
         class={['cb-table', `cb-table-${this.size}`]}
         v-on:selection-change={this.handleSelectionChange}
+        v-on:current-change={this.handleCurrentRowChange}
+        v-on:sort-change={this.handleSortChange}
       >
         {this.showSelection && <ElTableColumn type="selection" width={55} />}
+        {this.showExpand && (
+          <ElTableColumn type="expand" width={55}>
+            {this.$slots['expand']}
+          </ElTableColumn>
+        )}
+        {this.showIndex && <ElTableColumn type="index" index={this.indexMethod} width={55} />}
+        {this.isTree && <ElTableColumn type="default" />}
         {this.renderTableColumns(h, this.columns)}
       </ElTable>
     )
@@ -278,7 +398,7 @@ export default {
     return (
       <div className="table-wrapper">
         {table}
-        {pagination}
+        {this.showPagination&&pagination}
       </div>
     )
   }
